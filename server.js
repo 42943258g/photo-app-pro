@@ -25,7 +25,6 @@ const bucket = storage.bucket(bucketName);
 // データベースの設定
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
 });
 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
