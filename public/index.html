@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>社内写真共有アプリ</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f9; color: #333; padding-bottom: 100px; }
+        .container { max-width: 600px; margin: auto; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 10px; margin-top: 5px; box-sizing: border-box; font-size: 16px; }
+        button { background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%; padding: 10px; font-size: 16px; margin-top: 10px; }
+        .btn-small { width: auto; padding: 5px 8px; font-size: 12px; margin: 2px 0; border-radius: 3px; display: inline-block; text-decoration: none; color: white; text-align: center; cursor: pointer; border: none;}
+        .bg-edit { background: #ffc107; color: #000; }
+        .bg-dl { background: #17a2b8; }
+        .bg-del { background: #dc3545; }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 15px; }
+        .photo-card { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 5px; text-align: center; }
+        .photo-card img { width: 100%; height: 100px; object-fit: cover; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .photo-card img:hover { opacity: 0.8; }
+        .photo-info { font-size: 12px; margin: 5px 0; color: #333; font-weight: bold; word-break: break-all; }
+        .location-block { background: #fff; padding: 15px; border-radius: 8px; border: 2px solid #ddd; margin-bottom: 20px; }
+        .location-header { margin: 0 0 10px 0; color: #333; font-size: 18px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .input-group { background: #f9f9f9; padding: 10px; border-radius: 4px; text-align: center;}
+        input[type="file"] { width: 100%; font-size: 16px; }
+        
+        .bottom-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(255, 255, 255, 0.9); padding: 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); display: flex; justify-content: center; z-index: 100; }
+        .btn-save-all { background: #28a745; max-width: 600px; margin: 0; font-size: 18px; font-weight: bold; padding: 15px; border-radius: 50px; }
+
+        /* 画像拡大用モーダル */
+        #imageModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 9999; text-align: center; }
+        #imageModal img { max-width: 95%; max-height: 80vh; margin-top: 10vh; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        .modal-close { position: absolute; top: 20px; right: 30px; color: white; font-size: 40px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loginArea" class="card">
+            <h2>🔐 現場ログイン</h2>
+            <input type="text" id="loginId" placeholder="ログインID">
+            <input type="password" id="loginPass" placeholder="パスワード">
+            <button onclick="login()">ログイン</button>
+        </div>
+
+        <div id="appArea" style="display: none;">
+            <div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px;">
+                <h3 id="roomTitle" style="margin: 0;">ルーム名</h3>
+                <button onclick="logout()" style="width: auto; background: #666; padding: 5px 10px; margin: 0;">ログアウト</button>
+            </div>
+            <div id="locationsContainer"></div>
+        </div>
+    </div>
+
+    <div id="bottomBar" class="bottom-bar" style="display: none;">
+        <button class="btn-save-all" onclick="uploadAll()">🚀 選んだ写真をすべてアップロード</button>
+    </div>
+
+    <div id="imageModal" onclick="this.style.display='none'">
+        <span class="modal-close">&times;</span>
+        <img id="modalImg" src="">
+    </div>
+
+    <script>
+        let currentRoom = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('id')) document.getElementById('loginId').value = params.get('id');
+            if (params.get('pass')) document.getElementById('loginPass').value = params.get('pass');
+            if (params.get('auto') === 'true') login();
+        });
+
+        function login() {
+            const id = document.getElementById('loginId').value;
+            const pass = document.getElementById('loginPass').value;
+
+            if (id === 'admin' && pass === 'admin123') {
+                sessionStorage.setItem('isAdmin', 'true'); // 合鍵を渡す
+                window.location.href = '/admin.html';
+                return;
+            }
+            
+            fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: id, loginPass: pass }) })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentRoom = data.room;
+                    document.getElementById('loginArea').style.display = 'none';
+                    document.getElementById('appArea').style.display = 'block';
+                    document.getElementById('bottomBar').style.display = 'flex';
+                    document.getElementById('roomTitle').innerText = currentRoom.name;
+                    buildLocationBlocks();
+                } else { alert(data.message); }
+            });
+        }
+
+        function logout() { window.location.reload(); }
+
+        function buildLocationBlocks() {
+            fetch(`/api/locations/${currentRoom.id}`).then(res => res.json()).then(locations => {
+                const container = document.getElementById('locationsContainer');
+                container.innerHTML = ''; 
+                locations.forEach(loc => {
+                    container.innerHTML += `
+                        <div class="location-block">
+                            <h3 class="location-header">📂 ${loc.name}</h3>
+                            <div class="input-group">
+                                <input type="file" id="file_${loc.id}" accept="image/*" multiple>
+                            </div>
+                            <div id="gallery_${loc.id}" class="gallery"></div>
+                        </div>
+                    `;
+                });
+                loadAllPhotos();
+            });
+        }
+
+        // --- 複数写真を一気にアップロード ---
+        async function uploadAll() {
+            const fileInputs = document.querySelectorAll('input[type="file"]');
+            let uploadCount = 0;
+
+            document.getElementById('bottomBar').innerHTML = '<span style="font-weight:bold; font-size:18px;">アップロード中... しばらくお待ちください</span>';
+
+            for (const input of fileInputs) {
+                if (input.files.length > 0) {
+                    const locationId = input.id.split('_')[1];
+                    // 選ばれた複数の写真を1枚ずつ送信
+                    for (let i = 0; i < input.files.length; i++) {
+                        const formData = new FormData();
+                        formData.append('photo', input.files[i]);
+                        formData.append('locationId', locationId);
+                        formData.append('title', ''); // メモは空で送信
+                        await fetch('/api/upload', { method: 'POST', body: formData });
+                        uploadCount++;
+                    }
+                    input.value = ''; // 終わったら空にする
+                }
+            }
+
+            if (uploadCount === 0) { alert('写真が選択されていません'); } 
+            else { alert(`${uploadCount} 枚の写真を保存しました！`); loadAllPhotos(); }
+
+            document.getElementById('bottomBar').innerHTML = '<button class="btn-save-all" onclick="uploadAll()">🚀 選んだ写真をすべてアップロード</button>';
+        }
+
+        function loadAllPhotos() {
+            fetch(`/api/photos/room/${currentRoom.id}`).then(res => res.json()).then(photos => {
+                document.querySelectorAll('.gallery').forEach(g => g.innerHTML = '');
+                photos.forEach(photo => {
+                    const targetGallery = document.getElementById(`gallery_${photo.location_id}`);
+                    if (targetGallery) {
+                        const memoText = photo.title || '(メモなし)';
+                        targetGallery.innerHTML += `
+                            <div class="photo-card">
+                                <img src="/api/image/new/${photo.id}" onclick="showModal('/api/image/new/${photo.id}')" title="クリックで拡大">
+                                <div class="photo-info">${memoText}</div>
+                                
+                                <button class="btn-small bg-edit" onclick="editMemo(${photo.id}, '${photo.title || ''}')">📝 メモ</button>
+                                <a href="/api/image/new/${photo.id}" download="photo_${photo.id}.jpg" class="btn-small bg-dl">📥 DL</a>
+                                <button class="btn-small bg-del" onclick="deletePhoto(${photo.id})">🗑️</button>
+                            </div>
+                        `;
+                    }
+                });
+            });
+        }
+
+        // --- 画像拡大表示 ---
+        function showModal(src) {
+            document.getElementById('modalImg').src = src;
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        // --- メモ（タイトル）の後から変更 ---
+        function editMemo(id, currentMemo) {
+            const newMemo = prompt('写真のメモを入力してください', currentMemo);
+            if (newMemo !== null) {
+                fetch(`/api/photos/${id}/memo`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newMemo }) })
+                .then(() => loadAllPhotos());
+            }
+        }
+
+        function deletePhoto(id) {
+            if (!confirm('削除しますか？')) return;
+            fetch(`/api/photos/${id}`, { method: 'DELETE' }).then(() => loadAllPhotos());
+        }
+    </script>
+</body>
+</html>

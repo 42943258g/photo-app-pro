@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <script>
+        if (sessionStorage.getItem('isAdmin') !== 'true') {
+            alert('不正なアクセスです。ログイン画面から入り直してください。');
+            window.location.replace('/'); // トップページに強制送還
+        }
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理者画面 - ルーム・場所作成</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: #333; color: white; }
+        .container { max-width: 1100px; margin: auto; }
+        .card { background: #444; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        input[type="text"], button, select { padding: 8px; font-size: 15px; box-sizing: border-box; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #fff; color: #333; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #eee; text-align: center; }
+        .excel-table input { width: 100%; border: none; outline: none; background: transparent; padding: 5px; font-size: 15px; }
+        .excel-table input:focus { background: #e6f7ff; }
+        .excel-table td { padding: 0; }
+        .excel-table td.readonly { padding: 8px; background: #f9f9f9; text-align: center; color: #666; }
+        
+        .credentials { background: #eee; padding: 3px 6px; color: #d14; font-family: monospace; border-radius: 3px; font-size: 14px; }
+        .btn-action { margin: 2px; padding: 5px 8px; font-size: 12px; cursor: pointer; border: none; border-radius: 4px; color: white; text-decoration: none; display: inline-block;}
+        .btn-copy { background: #0066cc; }
+        .btn-enter { background: #28a745; }
+        .btn-dl { background: #17a2b8; }
+        .btn-del { background: #dc3545; }
+        .btn-warn { background: #ffc107; color: #000; }
+        .btn-dark { background: #6c757d; }
+        
+        /* 削除不可ボタンのデザイン（バグ修正） */
+        button:disabled { background: #ccc !important; color: #666 !important; cursor: not-allowed !important; opacity: 0.7; }
+        
+        .tag { display: inline-block; background: #e0e0e0; padding: 2px 6px; border-radius: 4px; margin: 2px; font-size: 12px; }
+        .editable-name:hover { background: #fffae6; cursor: pointer; text-decoration: underline; }
+        
+        /* 停止中のルームのデザイン */
+        .room-stopped { background: #ffebee !important; }
+
+        /* ログ用モーダル */
+        #logModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; }
+        .modal-content { background: white; color: #333; max-width: 500px; margin: 10vh auto; padding: 20px; border-radius: 8px; max-height: 80vh; overflow-y: auto;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>⚙️ 管理者専用ダッシュボード</h2>
+        <button onclick="adminLogout()" style="background:#666; color:white; border:none; padding:5px 10px; border-radius:4px; float:right;">ログアウト</button>
+        
+        <div class="card">
+            <h3>① 新しいルームを作成</h3>
+            <input type="text" id="roomName" placeholder="例：第1回社内会議, 渋谷現場 など" style="width: 300px;">
+            <button onclick="createRoom()" style="background:#28a745; color:white; border:none; padding:8px 15px; border-radius:4px;">ルーム作成</button>
+        </div>
+
+        <div class="card">
+            <h3>② フォルダ管理シート（エクセルからコピペOK）</h3>
+            <select id="roomSelect" onchange="loadEditorSheet()" style="width: 100%; margin-bottom: 10px;">
+                <option value="">▼ 対象のルームを選択してください</option>
+            </select>
+            <div id="editorArea" style="display: none; background: #555; padding: 15px; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+                    <p style="margin: 0; color: #ffcc00; font-size: 13px;">※写真がアップロード済みのNo（フォルダ）は削除できません。</p>
+                    <button onclick="syncLocations()" style="background: #28a745; color: white; border: none; font-size: 16px; font-weight: bold; padding: 10px 20px; border-radius: 4px; cursor: pointer;">💾 リストを保存</button>
+                </div>
+                <table class="excel-table" style="margin-top: 10px;">
+                    <thead><tr><th style="width: 50px;">No</th><th>フォルダ名</th><th style="width: 60px;">操作</th></tr></thead>
+                    <tbody id="sheetBody"></tbody>
+                </table>
+                <button onclick="addEmptyRow()" style="margin-top: 10px; padding: 5px 15px;">+ 新規行を追加</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>作成済みルーム一覧</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">No</th>
+                        <th style="width: 150px;">ルーム名 (変更)</th>
+                        <th style="width: 180px;">ID / PASS</th>
+                        <th>フォルダ一覧 (枚数)</th>
+                        <th style="width: 250px;">アクション</th>
+                    </tr>
+                </thead>
+                <tbody id="roomList"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="logModal" onclick="closeLogModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h3 style="margin-top: 0;">📊 ログイン履歴 (直近50件)</h3>
+            <ul id="logList" style="padding-left: 20px; font-size: 14px;"></ul>
+            <button onclick="document.getElementById('logModal').style.display='none'" style="width: 100%; margin-top: 15px; background: #666;">閉じる</button>
+        </div>
+    </div>
+
+    <script>
+        function loadRooms() {
+            const currentSelectValue = document.getElementById('roomSelect').value;
+            fetch('/api/admin/rooms').then(res => res.json()).then(rooms => {
+                const tbody = document.getElementById('roomList');
+                const roomSelect = document.getElementById('roomSelect');
+                tbody.innerHTML = '';
+                roomSelect.innerHTML = '<option value="">▼ 対象のルームを選択してください</option>';
+
+                rooms.forEach(room => {
+                    const isActive = room.is_active !== false; // null対応
+                    const statusText = isActive ? '' : '<span style="color:red; font-weight:bold;">[停止中]</span> ';
+                    const rowClass = isActive ? '' : 'room-stopped';
+                    
+                    roomSelect.innerHTML += `<option value="${room.id}">No.${room.id} : ${room.name} ${isActive ? '' : '(停止中)'}</option>`;
+                    const locationsHtml = room.locations.map(loc => `<span class="tag">${loc.name} <b style="color:#0066cc;">(${loc.photo_count}枚)</b></span>`).join('');
+
+                    tbody.innerHTML += `
+                        <tr class="${rowClass}">
+                            <td style="text-align: center; font-weight: bold;">${room.id}</td>
+                            <td class="editable-name" onclick="renameRoom(${room.id}, '${room.name}')" title="クリックで名前を変更"><strong>${statusText}${room.name} ✏️</strong></td>
+                            <td>
+                                ID: <span class="credentials">${room.login_id}</span><br>
+                                PW: <span class="credentials">${room.login_pass}</span><br>
+                                <button class="btn-action btn-warn" onclick="regenerateAuth(${room.id})">🔄 再発行</button>
+                            </td>
+                            <td style="font-size: 13px;">${locationsHtml || '<span style="color:#aaa;">(なし)</span>'}</td>
+                            <td>
+                                <button class="btn-action btn-copy" onclick="copyInfo('${room.name}', '${room.login_id}', '${room.login_pass}')">📋 案内</button>
+                                <button class="btn-action btn-enter" onclick="enterRoom('${room.login_id}', '${room.login_pass}')">🚪 入室</button>
+                                <a href="/api/admin/rooms/${room.id}/download" class="btn-action btn-dl" target="_blank">📦 DL</a>
+                                <br>
+                                <button class="btn-action btn-dark" onclick="showLogs(${room.id})">📊 ログ</button>
+                                <button class="btn-action ${isActive ? 'btn-del' : 'btn-enter'}" onclick="toggleActive(${room.id})">${isActive ? '🛑 停止' : '▶️ 再開'}</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                if (currentSelectValue) { document.getElementById('roomSelect').value = currentSelectValue; loadEditorSheet(); }
+            });
+        }
+
+        function adminLogout() {
+            sessionStorage.removeItem('isAdmin'); // 合鍵を捨てる
+            window.location.href = '/'; // トップに戻る
+        }
+
+        // --- 新機能：ID/PW再発行 ---
+        function regenerateAuth(id) {
+            if (!confirm('IDとパスワードを新しく再発行しますか？\n（今のIDとパスワードは使えなくなります）')) return;
+            fetch(`/api/admin/rooms/${id}/credentials`, { method: 'PUT' }).then(() => loadRooms());
+        }
+
+        // --- 新機能：ルームの停止・再開 ---
+        function toggleActive(id) {
+            if (!confirm('このルームの 停止/再開 を切り替えますか？')) return;
+            fetch(`/api/admin/rooms/${id}/toggle-active`, { method: 'PUT' }).then(() => loadRooms());
+        }
+
+        // --- 新機能：ログの表示 ---
+        function showLogs(id) {
+            fetch(`/api/admin/rooms/${id}/logs`).then(res => res.json()).then(logs => {
+                const list = document.getElementById('logList');
+                list.innerHTML = '';
+                if (logs.length === 0) { list.innerHTML = '<li>まだログイン履歴がありません</li>'; }
+                logs.forEach(log => {
+                    const date = new Date(log.created_at).toLocaleString('ja-JP');
+                    list.innerHTML += `<li>${date} - IP: ${log.ip_address}</li>`;
+                });
+                document.getElementById('logModal').style.display = 'block';
+            });
+        }
+        function closeLogModal(e) { if(e.target.id === 'logModal') document.getElementById('logModal').style.display = 'none'; }
+
+        // --- バグ修正：シートの行生成処理（parseIntで数値化） ---
+        function createRow(id, name, photoCount) {
+            const tr = document.createElement('tr');
+            const noText = id ? id : '*';
+            // 文字列で返ってくる数値を確実に数値(int)に変換して比較
+            const count = parseInt(photoCount) || 0; 
+            const disableAttr = count > 0 ? 'disabled title="写真が入っているため削除できません"' : '';
+            tr.innerHTML = `
+                <td class="readonly">${noText}<input type="hidden" class="loc-id" value="${id || ''}"></td>
+                <td><input type="text" class="loc-name" value="${name || ''}" placeholder="ここに入力・ペースト"></td>
+                <td style="text-align: center; padding: 5px;"><button class="btn-action btn-del" onclick="this.closest('tr').remove()" ${disableAttr}>削除</button></td>
+            `;
+            return tr;
+        }
+
+        // --- その他の機能（変更なし） ---
+        function renameRoom(id, oldName) {
+            const newName = prompt('新しいルーム名を入力してください', oldName);
+            if (newName && newName !== oldName) {
+                fetch(`/api/admin/rooms/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newName }) }).then(() => loadRooms());
+            }
+        }
+        function loadEditorSheet() {
+            const roomId = document.getElementById('roomSelect').value;
+            const editorArea = document.getElementById('editorArea');
+            const sheetBody = document.getElementById('sheetBody');
+            if (!roomId) { editorArea.style.display = 'none'; return; }
+            editorArea.style.display = 'block';
+            fetch(`/api/locations/${roomId}`).then(res => res.json()).then(locations => {
+                sheetBody.innerHTML = '';
+                if (locations.length === 0) addEmptyRow();
+                locations.forEach(loc => sheetBody.appendChild(createRow(loc.id, loc.name, loc.photo_count)));
+            });
+        }
+        function addEmptyRow() { document.getElementById('sheetBody').appendChild(createRow(null, '', 0)); }
+        
+        document.getElementById('sheetBody').addEventListener('paste', function(e) {
+            if (e.target && e.target.classList.contains('loc-name')) {
+                e.preventDefault();
+                const text = (e.clipboardData || window.clipboardData).getData('text');
+                const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+                if (lines.length === 0) return;
+                e.target.value = lines[0];
+                const tbody = document.getElementById('sheetBody');
+                for (let i = 1; i < lines.length; i++) tbody.appendChild(createRow(null, lines[i], 0));
+            }
+        });
+
+        function syncLocations() {
+            const roomId = document.getElementById('roomSelect').value;
+            const locations = Array.from(document.querySelectorAll('#sheetBody tr')).map(tr => {
+                const id = tr.querySelector('.loc-id').value;
+                const name = tr.querySelector('.loc-name').value;
+                return name.trim() ? { id: id ? parseInt(id) : null, name: name.trim() } : null;
+            }).filter(l => l !== null);
+            fetch(`/api/admin/locations/sync/${roomId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locations: locations }) })
+            .then(() => { alert('保存しました！'); loadRooms(); });
+        }
+        function createRoom() {
+            const name = document.getElementById('roomName').value;
+            if (!name) return alert('ルーム名を入力してください');
+            fetch('/api/admin/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomName: name }) }).then(() => { document.getElementById('roomName').value = ''; loadRooms(); });
+        }
+        function copyInfo(name, id, pass) {
+            const text = `【写真共有ルーム】\nルーム名：${name}\n\n▼以下のURLを開くとIDが自動入力されます\n${window.location.origin}/?id=${id}\n\n※アクセス時、画面表示まで約1分かかる場合があります。\n\nログインID：${id}\nパスワード：${pass}`;
+            navigator.clipboard.writeText(text).then(() => alert('コピーしました！'));
+        }
+        function enterRoom(id, pass) { window.open(`${window.location.origin}/?id=${id}&pass=${pass}&auto=true`, '_blank'); }
+
+        loadRooms();
+    </script>
+</body>
+</html>
