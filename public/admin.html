@@ -134,6 +134,7 @@
                                 <br>
                                 <button class="btn-action btn-dark" onclick="showLogs(${room.id})">📊 ログ</button>
                                 <button class="btn-action ${isActive ? 'btn-del' : 'btn-enter'}" onclick="toggleActive(${room.id})">${isActive ? '🛑 停止' : '▶️ 再開'}</button>
+                                <button class="btn-action btn-del" onclick="deleteRoom(${room.id})" style="background: #8b0000;">🗑️ 削除</button>
                             </td>
                         </tr>
                     `;
@@ -157,6 +158,30 @@
         function toggleActive(id) {
             if (!confirm('このルームの 停止/再開 を切り替えますか？')) return;
             fetch(`/api/admin/rooms/${id}/toggle-active`, { method: 'PUT' }).then(() => loadRooms());
+        }
+        
+        // --- 新機能：ルームを丸ごと削除 ---
+        function deleteRoom(id) {
+            // 間違えて押したときのために確認メッセージを出します
+            if (!confirm('本当にこのルームを削除しますか？\n※ルーム内のフォルダや写真の記録もすべて削除され、元に戻せません！')) {
+                return; // 「キャンセル」を押したらここでストップ
+            }
+            
+            // サーバーに「このIDのルームを削除して！」とお願いします
+            fetch(`/api/admin/rooms/${id}`, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert('ルームを削除しました。');
+                    loadRooms(); // 画面のリストを最新の状態に更新します
+                } else {
+                    alert('削除に失敗しました。');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('通信エラーが発生しました。');
+            });
         }
 
         // --- 新機能：ログの表示 ---
