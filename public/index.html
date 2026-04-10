@@ -38,7 +38,7 @@
         <div id="loginArea" class="card">
             <h2>🔐 現場ログイン</h2>
             <input type="text" id="loginId" placeholder="ログインID">
-            <input type="password" id="loginPass" placeholder="パスワード">
+            <input type="password" id="loginPass" placeholder="パスワード (設定されている場合のみ)">
             <button onclick="login()">ログイン</button>
         </div>
 
@@ -100,17 +100,31 @@
             fetch(`/api/locations/${currentRoom.id}`).then(res => res.json()).then(locations => {
                 const container = document.getElementById('locationsContainer');
                 container.innerHTML = ''; 
-                locations.forEach(loc => {
-                    container.innerHTML += `
-                        <div class="location-block">
-                            <h3 class="location-header">📂 ${loc.name}</h3>
-                            <div class="input-group">
-                                <input type="file" id="file_${loc.id}" accept="image/*" multiple>
+
+                // 階層を整理して画面に書くための魔法の関数
+                const renderLocations = (parentId, depth) => {
+                    // 親Noが一致するものだけを探す（最初は null の「親玉」を探す）
+                    const targets = locations.filter(loc => loc.parent_id == parentId);
+                    
+                    targets.forEach(loc => {
+                        const indent = depth * 20; // 1つ深くなるごとに左に20px隙間を空ける
+                        const prefix = depth > 0 ? '┗ ' : ''; // 子フォルダには ┗ を付ける
+                        
+                        container.innerHTML += `
+                            <div class="location-block" style="margin-left: ${indent}px; margin-bottom: 10px;">
+                                <h3 class="location-header" style="font-size: ${18 - depth}px;">${prefix}📂 ${loc.name}</h3>
+                                <div class="input-group" style="padding: 5px;">
+                                    <input type="file" id="file_${loc.id}" accept="image/*" multiple>
+                                </div>
+                                <div id="gallery_${loc.id}" class="gallery"></div>
                             </div>
-                            <div id="gallery_${loc.id}" class="gallery"></div>
-                        </div>
-                    `;
-                });
+                        `;
+                        // このフォルダの中にある「子フォルダ」をさらに探す！
+                        renderLocations(loc.id, depth + 1);
+                    });
+                };
+
+                renderLocations(null, 0); // 一番上の階層（親がいないフォルダ）からスタート
                 loadAllPhotos();
             });
         }

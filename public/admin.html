@@ -10,6 +10,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理者画面 - ルーム・場所作成</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 20px; background: #333; color: white; }
         .container { max-width: 1100px; margin: auto; }
@@ -78,7 +80,7 @@
         <div class="card">
             <h3>作成済みルーム一覧</h3>
             <table>
-                <thead>
+                <thead><tr><th style="width: 50px;">No</th><th style="width: 60px;">親No</th><th>フォルダ名</th><th style="width: 60px;">操作</th></tr></thead>
                     <tr>
                         <th style="width: 40px;">No</th>
                         <th style="width: 150px;">ルーム名 (変更)</th>
@@ -100,6 +102,15 @@
         </div>
     </div>
 
+    <div id="qrModal" onclick="this.style.display='none'" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; text-align: center;">
+        <div style="background: white; color: #333; max-width: 350px; margin: 15vh auto; padding: 30px 20px; border-radius: 8px;" onclick="event.stopPropagation()">
+            <h3 id="qrRoomName" style="margin-top: 0;">ルーム名</h3>
+            <div id="qrcode" style="display: flex; justify-content: center; margin: 20px 0;"></div>
+            <p id="qrUrlText" style="font-size: 12px; word-break: break-all; color: #666;"></p>
+            <button onclick="document.getElementById('qrModal').style.display='none'" style="width: 100%; background: #666; color: white; padding: 10px; border: none; border-radius: 4px;">閉じる</button>
+        </div>
+    </div>
+
     <script>
         function loadRooms() {
             const currentSelectValue = document.getElementById('roomSelect').value;
@@ -110,12 +121,17 @@
                 roomSelect.innerHTML = '<option value="">▼ 対象のルームを選択してください</option>';
 
                 rooms.forEach(room => {
-                    const isActive = room.is_active !== false; // null対応
+                    const isActive = room.is_active !== false;
                     const statusText = isActive ? '' : '<span style="color:red; font-weight:bold;">[停止中]</span> ';
                     const rowClass = isActive ? '' : 'room-stopped';
                     
                     roomSelect.innerHTML += `<option value="${room.id}">No.${room.id} : ${room.name} ${isActive ? '' : '(停止中)'}</option>`;
                     const locationsHtml = room.locations.map(loc => `<span class="tag">${loc.name} <b style="color:#0066cc;">(${loc.photo_count}枚)</b></span>`).join('');
+
+                    // パスワードの表示設定
+                    const passDisplay = room.login_pass ? `<span class="credentials">${room.login_pass}</span>` : '<span style="color:#888;">(なし)</span>';
+                    const passButtons = `<button class="btn-action btn-warn" onclick="setRoomPassword(${room.id})">🔑 PW変更</button>` +
+                                        (room.login_pass ? `<button class="btn-action btn-del" onclick="clearRoomPassword(${room.id})">🔓 PW削除</button>` : '');
 
                     tbody.innerHTML += `
                         <tr class="${rowClass}">
@@ -123,13 +139,14 @@
                             <td class="editable-name" onclick="renameRoom(${room.id}, '${room.name}')" title="クリックで名前を変更"><strong>${statusText}${room.name} ✏️</strong></td>
                             <td>
                                 ID: <span class="credentials">${room.login_id}</span><br>
-                                PW: <span class="credentials">${room.login_pass}</span><br>
-                                <button class="btn-action btn-warn" onclick="regenerateAuth(${room.id})">🔄 再発行</button>
+                                PW: ${passDisplay}<br>
+                                ${passButtons}
                             </td>
                             <td style="font-size: 13px;">${locationsHtml || '<span style="color:#aaa;">(なし)</span>'}</td>
                             <td>
-                                <button class="btn-action btn-copy" onclick="copyInfo('${room.name}', '${room.login_id}', '${room.login_pass}')">📋 案内</button>
-                                <button class="btn-action btn-enter" onclick="enterRoom('${room.login_id}', '${room.login_pass}')">🚪 入室</button>
+                                <button class="btn-action btn-dark" onclick="showQR('${room.name}', '${room.login_id}', '${room.login_pass || ''}')">📱 QR</button>
+                                <button class="btn-action btn-copy" onclick="copyInfo('${room.name}', '${room.login_id}', '${room.login_pass || ''}')">📋 案内</button>
+                                <button class="btn-action btn-enter" onclick="enterRoom('${room.login_id}', '${room.login_pass || ''}')">🚪 入室</button>
                                 <a href="/api/admin/rooms/${room.id}/download" class="btn-action btn-dl" target="_blank">📦 DL</a>
                                 <br>
                                 <button class="btn-action btn-dark" onclick="showLogs(${room.id})">📊 ログ</button>
@@ -141,6 +158,30 @@
                 });
                 if (currentSelectValue) { document.getElementById('roomSelect').value = currentSelectValue; loadEditorSheet(); }
             });
+        }
+
+        // --- 新機能：パスワード設定・削除 ---
+        function setRoomPassword(id) {
+            const newPass = prompt('新しいパスワードを入力してください\n（空白にしてOKを押すと削除されます）');
+            if (newPass !== null) {
+                fetch(`/api/admin/rooms/${id}/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword: newPass }) }).then(() => loadRooms());
+            }
+        }
+        function clearRoomPassword(id) {
+            if (!confirm('パスワードを削除し、IDだけでログインできるようにしますか？')) return;
+            fetch(`/api/admin/rooms/${id}/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword: '' }) }).then(() => loadRooms());
+        }
+
+        // --- 新機能：QRコード表示 ---
+        function showQR(name, id, pass) {
+            document.getElementById('qrRoomName').innerText = name;
+            const loginUrl = `${window.location.origin}/?id=${id}` + (pass ? `&pass=${pass}` : '') + `&auto=true`;
+            document.getElementById('qrUrlText').innerText = loginUrl;
+            
+            document.getElementById('qrcode').innerHTML = ''; // 前の画像をリセット
+            new QRCode(document.getElementById("qrcode"), { text: loginUrl, width: 150, height: 150 });
+            
+            document.getElementById('qrModal').style.display = 'block';
         }
 
         function adminLogout() {
@@ -199,21 +240,6 @@
         }
         function closeLogModal(e) { if(e.target.id === 'logModal') document.getElementById('logModal').style.display = 'none'; }
 
-        // --- バグ修正：シートの行生成処理（parseIntで数値化） ---
-        function createRow(id, name, photoCount) {
-            const tr = document.createElement('tr');
-            const noText = id ? id : '*';
-            // 文字列で返ってくる数値を確実に数値(int)に変換して比較
-            const count = parseInt(photoCount) || 0; 
-            const disableAttr = count > 0 ? 'disabled title="写真が入っているため削除できません"' : '';
-            tr.innerHTML = `
-                <td class="readonly">${noText}<input type="hidden" class="loc-id" value="${id || ''}"></td>
-                <td><input type="text" class="loc-name" value="${name || ''}" placeholder="ここに入力・ペースト"></td>
-                <td style="text-align: center; padding: 5px;"><button class="btn-action btn-del" onclick="this.closest('tr').remove()" ${disableAttr}>削除</button></td>
-            `;
-            return tr;
-        }
-
         // --- その他の機能（変更なし） ---
         function renameRoom(id, oldName) {
             const newName = prompt('新しいルーム名を入力してください', oldName);
@@ -247,16 +273,37 @@
             }
         });
 
+        function createRow(id, name, photoCount, parentId) {
+            const tr = document.createElement('tr');
+            const noText = id ? id : '*';
+            const count = parseInt(photoCount) || 0; 
+            const disableAttr = count > 0 ? 'disabled title="写真が入っているため削除できません"' : '';
+            tr.innerHTML = `
+                <td class="readonly">${noText}<input type="hidden" class="loc-id" value="${id || ''}"></td>
+                <td><input type="number" class="loc-parent" value="${parentId || ''}" placeholder="親No" style="width: 50px; padding: 5px;"></td>
+                <td><input type="text" class="loc-name" value="${name || ''}" placeholder="ここに入力・ペースト"></td>
+                <td style="text-align: center; padding: 5px;"><button class="btn-action btn-del" onclick="this.closest('tr').remove()" ${disableAttr}>削除</button></td>
+            `;
+            return tr;
+        }
+
         function syncLocations() {
             const roomId = document.getElementById('roomSelect').value;
             const locations = Array.from(document.querySelectorAll('#sheetBody tr')).map(tr => {
                 const id = tr.querySelector('.loc-id').value;
+                const parentId = tr.querySelector('.loc-parent').value;
                 const name = tr.querySelector('.loc-name').value;
-                return name.trim() ? { id: id ? parseInt(id) : null, name: name.trim() } : null;
+                return name.trim() ? { 
+                    id: id ? parseInt(id) : null, 
+                    parent_id: parentId ? parseInt(parentId) : null, // 追加：親No
+                    name: name.trim() 
+                } : null;
             }).filter(l => l !== null);
             fetch(`/api/admin/locations/sync/${roomId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locations: locations }) })
             .then(() => { alert('保存しました！'); loadRooms(); });
         }
+
+
         function createRoom() {
             const name = document.getElementById('roomName').value;
             if (!name) return alert('ルーム名を入力してください');

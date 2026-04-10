@@ -19,12 +19,14 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // Google Cloud Storage の設定
-const bucketName = 'photo-app-storage-jo'; // ★先ほど作ったバケット名
+const bucketName = 'company-photo-storage-2026'; // ★先ほど作ったバケット名
 const bucket = storage.bucket(bucketName);
 
-// データベースの設定
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    user: 'postgres',
+    password: '_nL0yGK4y3y_',
+    database: 'photo_db',
+    host: '/cloudsql/jigyokaihatsu-apps-prod:asia-northeast2:photo-app-db'
 });
 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -89,11 +91,10 @@ app.post('/api/admin/rooms', async (req, res) => {
     if (!roomName) return res.status(400).send('ルーム名が必要です');
 
     const loginId = generateRandomString(6);
-    const loginPass = generateRandomString(8);
 
     try {
         const query = 'INSERT INTO rooms (name, login_id, login_pass) VALUES ($1, $2, $3) RETURNING *';
-        const result = await pool.query(query, [roomName, loginId, loginPass]);
+        const result = await pool.query(query, [roomName, loginId, null]); 
         res.json(result.rows[0]);
     } catch (err) {
         res.status(500).send('ルームの作成に失敗しました');
@@ -163,7 +164,7 @@ app.put('/api/admin/locations/sync/:roomId', async (req, res) => {
             if (loc.id) {
                 await pool.query('UPDATE locations SET name = $1 WHERE id = $2', [loc.name.trim(), loc.id]);
             } else {
-                await pool.query('INSERT INTO locations (room_id, name) VALUES ($1, $2)', [roomId, loc.name.trim()]);
+                await pool.query('INSERT INTO locations (room_id, parent_id, name) VALUES ($1, $2, $3)', [roomId, loc.name.trim()]);
             }
         }
         res.json({ success: true });
@@ -266,11 +267,18 @@ app.post('/api/login', async (req, res) => {
     if (loginId === 'admin' && loginPass === 'admin123') return res.json({ success: true, isAdmin: true });
     
     try {
-        const result = await pool.query('SELECT * FROM rooms WHERE login_id = $1 AND login_pass = $2', [loginId, loginPass]);
+        // IDだけで一度検索する
+        const result = await pool.query('SELECT * FROM rooms WHERE login_id = $1', [loginId]);
         if (result.rows.length > 0) {
             const room = result.rows[0];
+            
             if (!room.is_active) {
                 return res.status(403).json({ success: false, message: 'このルームは現在利用停止されています' });
+            }
+
+            // ★重要：パスワードが設定されている(nullじゃない)場合のみ、一致するかチェックする
+            if (room.login_pass && room.login_pass !== loginPass) {
+                return res.status(401).json({ success: false, message: 'パスワードが違います' });
             }
 
             const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '不明';
@@ -329,7 +337,7 @@ app.get('/api/photos/room/:roomId', async (req, res) => {
 app.get('/api/locations/:roomId', async (req, res) => {
     try {
         const query = `
-            SELECT l.id, l.name, COUNT(p.id) as photo_count 
+            SSELECT l.id, l.parent_id, l.name, COUNT(p.id) as photo_count 
             FROM locations l 
             LEFT JOIN photos p ON l.id = p.location_id 
             WHERE l.room_id = $1 
@@ -343,7 +351,17 @@ app.get('/api/locations/:roomId', async (req, res) => {
     }
 });
 
-
+// パスワードの発行・更新・削除（空文字を送ると削除される）
+app.put('/api/admin/rooms/:id/password', async (req, res) => {
+    const { newPassword } = req.body;
+    const passToSave = newPassword ? newPassword : null; // 空ならnullにして「パスワード無し」状態に戻す
+    try {
+        await pool.query('UPDATE rooms SET login_pass = $1 WHERE id = $2', [passToSave, req.params.id]);
+        res.json({ success: true, login_pass: passToSave });
+    } catch (err) {
+        res.status(500).send('パスワードの更新に失敗しました');
+    }
+});
 
 // --- API: 写真をアップロード (最強フル対応版) ---
 // ★ upload.any() に変更：ファイルでも文字でも何でも受け取る設定
